@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geschützter Bereich | AFFK Case Study</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .loader { border-top-color: #ea580c; -webkit-animation: spinner 1.5s linear infinite; animation: spinner 1.5s linear infinite; }
+        @-webkit-keyframes spinner { 0% { -webkit-transform: rotate(0deg); } 100% { -webkit-transform: rotate(360deg); } }
+        @keyframes spinner { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-stone-900 text-stone-200 h-screen flex items-center justify-center overflow-hidden">
+
+    <div class="max-w-md w-full bg-stone-800 p-8 rounded-2xl shadow-2xl border border-stone-700 relative overflow-hidden">
+        <!-- Decorative Background -->
+        <div class="absolute top-0 right-0 w-32 h-32 bg-orange-600 rounded-full blur-[80px] opacity-20 -translate-y-1/2 translate-x-1/2 pointer-events-none"></div>
+        
+        <div class="relative z-10">
+            <div class="flex justify-center mb-6">
+                <div class="bg-stone-700 p-3 rounded-full ring-1 ring-stone-600">
+                    <i data-lucide="lock" class="w-8 h-8 text-orange-500"></i>
+                </div>
+            </div>
+            
+            <h2 class="text-2xl font-bold text-center mb-2 text-white">Zugriff beschränkt</h2>
+            <p class="text-center text-stone-400 text-sm mb-8">Diese Website ist zugangsbeschränkt und verschlüsselt. Bitte authentifiziere dich.</p>
+
+            <form id="loginForm" class="space-y-4">
+                <div>
+                    <label for="password" class="block text-xs font-medium text-stone-500 uppercase tracking-wider mb-1">Passwort</label>
+                    <div class="relative">
+                        <input type="password" id="password" class="w-full bg-stone-900 border border-stone-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all placeholder-stone-600" placeholder="••••••••" required autofocus>
+                        <i data-lucide="key" class="absolute right-3 top-3.5 w-5 h-5 text-stone-600"></i>
+                    </div>
+                </div>
+
+                <div id="error-msg" class="hidden p-3 rounded bg-red-900/30 border border-red-800/50 text-red-400 text-sm text-center animate-pulse">
+                    Passwort ungültig.
+                </div>
+
+                <button type="submit" id="submitBtn" class="w-full bg-orange-600 hover:bg-orange-500 text-white font-bold py-3 px-4 rounded-lg transition-colors flex justify-center items-center gap-2 shadow-lg shadow-orange-900/20">
+                    <span>Entsperren</span>
+                    <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Encrypted Payload Holder -->
+    <script id="payload" type="application/json">
+        __PAYLOAD__
+    </script>
+
+    <script>
+        lucide.createIcons();
+
+        const payloadElement = document.getElementById('payload');
+        // Parse the payload injected by the build script
+        const encryptedData = JSON.parse(payloadElement.textContent);
+
+        async function deriveKey(password, salt) {
+            const enc = new TextEncoder();
+            const keyMaterial = await window.crypto.subtle.importKey(
+                "raw",
+                enc.encode(password),
+                { name: "PBKDF2" },
+                false,
+                ["deriveKey"]
+            );
+            
+            return window.crypto.subtle.deriveKey(
+                {
+                    name: "PBKDF2",
+                    salt: Uint8Array.from(atob(salt), c => c.charCodeAt(0)),
+                    iterations: 100000,
+                    hash: "SHA-256"
+                },
+                keyMaterial,
+                { name: "AES-GCM", length: 256 },
+                false,
+                ["decrypt"]
+            );
+        }
+
+        async function decrypt(password) {
+            try {
+                const salt = encryptedData.salt;
+                const iv = encryptedData.iv;
+                const ciphertext = encryptedData.ciphertext;
+
+                const key = await deriveKey(password, salt);
+                
+                const decrypted = await window.crypto.subtle.decrypt(
+                    {
+                        name: "AES-GCM",
+                        iv: Uint8Array.from(atob(iv), c => c.charCodeAt(0))
+                    },
+                    key,
+                    Uint8Array.from(atob(ciphertext), c => c.charCodeAt(0))
+                );
+
+                const dec = new TextDecoder();
+                return dec.decode(decrypted);
+            } catch (e) {
+                console.error(e);
+                return null; // Decryption failed
+            }
+        }
+
+        function setCookie(name, value, days) {
+            let expires = "";
+            if (days) {
+                const date = new Date();
+                date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+                expires = "; expires=" + date.toUTCString();
+            }
+            document.cookie = name + "=" + (value || "") + expires + "; path=/; SameSite=Strict";
+        }
+
+        function getCookie(name) {
+            const nameEQ = name + "=";
+            const ca = document.cookie.split(';');
+            for (let i = 0; i < ca.length; i++) {
+                let c = ca[i];
+                while (c.charAt(0) == ' ') c = c.substring(1, c.length);
+                if (c.indexOf(nameEQ) == 0) return c.substring(nameEQ.length, c.length);
+            }
+            return null;
+        }
+
+        async function tryLogin(password, remember = true) {
+             const btn = document.getElementById('submitBtn');
+             const errorMsg = document.getElementById('error-msg');
+             const originalBtnText = '<span>Entsperren</span><i data-lucide="arrow-right" class="w-4 h-4"></i>'; // Hardcoded to match original HTML
+
+             // Visual Feedback (only if button exists/visible)
+             if(btn) {
+                 btn.innerHTML = '<div class="loader w-5 h-5 rounded-full border-2 border-white/20"></div>';
+                 btn.disabled = true;
+                 errorMsg.classList.add('hidden');
+             }
+
+             // Small delay for UI
+             await new Promise(r => setTimeout(r, 300));
+
+             const htmlContent = await decrypt(password);
+
+             if (htmlContent) {
+                 if (remember) {
+                     // Save password in cookie for 30 days
+                     setCookie("affk_auth", btoa(password), 30);
+                 }
+                 document.open();
+                 document.write(htmlContent);
+                 document.close();
+                 return true;
+             } else {
+                 if(btn) {
+                    btn.innerHTML = originalBtnText;
+                    btn.disabled = false;
+                    // Re-initialize icons because we overwrote innerHTML
+                    lucide.createIcons(); 
+                 }
+                 if(errorMsg) errorMsg.classList.remove('hidden');
+                 return false;
+             }
+        }
+
+        // Check cookie on load
+        window.addEventListener('DOMContentLoaded', async () => {
+            const savedPass = getCookie("affk_auth");
+            if (savedPass) {
+                try {
+                    const pass = atob(savedPass);
+                    await tryLogin(pass, true);
+                } catch (e) {
+                    console.error("Cookie parse error", e);
+                }
+            }
+        });
+
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const pwd = document.getElementById('password').value;
+            await tryLogin(pwd, true);
+        });
+    </script>
+</body>
+</html>
